@@ -1,5 +1,5 @@
 <?php
-// manager/orders.php - Professional UI with Pagination
+// manager/orders.php - Professional UI with Pagination (FIXED FILTERING)
 require_once '../includes/config.php';
 require_once '../includes/session.php';
 require_once '../includes/FifoStock.php';
@@ -369,14 +369,20 @@ try {
     $dailyStatsStmt->execute();
     $dailyStats = $dailyStatsStmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Fix: Get all departments with proper display
+    // FIXED: Get department statistics - handle NULL or empty departments
     $deptSql = "SELECT 
-                    COALESCE(NULLIF(u.department, ''), 'Other') as department,
+                    CASE 
+                        WHEN u.department IS NULL OR u.department = '' THEN 'Not Specified'
+                        ELSE u.department
+                    END as department,
                     COUNT(*) as order_count
                 FROM orders o
-                LEFT JOIN users u ON o.user_id = u.user_id
-                WHERE u.department IS NOT NULL AND u.department != ''
-                GROUP BY u.department
+                INNER JOIN users u ON o.user_id = u.user_id
+                GROUP BY 
+                    CASE 
+                        WHEN u.department IS NULL OR u.department = '' THEN 'Not Specified'
+                        ELSE u.department
+                    END
                 ORDER BY order_count DESC";
     $deptStmt = $db->query($deptSql);
     $departmentStats = $deptStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -395,7 +401,7 @@ try {
 
 $quantityColumn = detectQuantityColumn($db);
 
-// Get orders with pagination
+// Get orders with pagination - FIXED: Better filtering
 $orders = [];
 try {
     $sql = "SELECT 
@@ -406,7 +412,11 @@ try {
                  JOIN fish_products fp ON oi.product_id = fp.product_id 
                  WHERE oi.order_id = o.order_id) as product_names,
                 COALESCE(u.full_name, u.email, 'Unknown') as customer_name,
-                u.email, u.department
+                u.email, 
+                CASE 
+                    WHEN u.department IS NULL OR u.department = '' THEN 'Not Specified'
+                    ELSE u.department
+                END as department
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.user_id
             WHERE 1=1";
@@ -448,6 +458,7 @@ try {
     
 } catch (PDOException $e) {
     error_log("Orders fetch error: " . $e->getMessage());
+    error_log("SQL: " . $sql);
     $orders = [];
 }
 
@@ -998,27 +1009,27 @@ $departmentColors = ['#0ea5e9', '#059669', '#8b5cf6', '#f59e0b', '#ef4444', '#ec
         <!-- Filter Tabs -->
         <div class="mb-6">
             <div class="flex flex-wrap gap-2">
-                <a href="?status=all&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'all' ? 'active' : ''; ?>">
+                <a href="?order_status=all&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'all' ? 'active' : ''; ?>">
                     <i class="fas fa-list text-[10px]"></i>
                     All Orders
                     <span class="filter-count ml-1.5"><?php echo $counts['all']; ?></span>
                 </a>
-                <a href="?status=pending&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'pending' ? 'active' : ''; ?>">
+                <a href="?order_status=pending&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'pending' ? 'active' : ''; ?>">
                     <i class="fas fa-clock text-[10px]"></i>
                     Pending
                     <span class="filter-count ml-1.5"><?php echo $counts['pending']; ?></span>
                 </a>
-                <a href="?status=confirmed&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'confirmed' ? 'active' : ''; ?>">
+                <a href="?order_status=confirmed&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'confirmed' ? 'active' : ''; ?>">
                     <i class="fas fa-check-circle text-[10px]"></i>
                     Confirmed
                     <span class="filter-count ml-1.5"><?php echo $counts['confirmed']; ?></span>
                 </a>
-                <a href="?status=claimed&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'claimed' ? 'active' : ''; ?>">
+                <a href="?order_status=claimed&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'claimed' ? 'active' : ''; ?>">
                     <i class="fas fa-hand-peace text-[10px]"></i>
                     Claimed
                     <span class="filter-count ml-1.5"><?php echo $counts['claimed']; ?></span>
                 </a>
-                <a href="?status=cancelled&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'cancelled' ? 'active' : ''; ?>">
+                <a href="?order_status=cancelled&<?php echo http_build_query(array_filter(['payment_method'=>$paymentFilter,'date_from'=>$dateFrom,'date_to'=>$dateTo,'search'=>$searchTerm])); ?>" class="filter-tab-pro <?php echo $statusFilter == 'cancelled' ? 'active' : ''; ?>">
                     <i class="fas fa-times-circle text-[10px]"></i>
                     Cancelled
                     <span class="filter-count ml-1.5"><?php echo $counts['cancelled']; ?></span>
@@ -1029,7 +1040,7 @@ $departmentColors = ['#0ea5e9', '#059669', '#8b5cf6', '#f59e0b', '#ef4444', '#ec
         <!-- Filters -->
         <div class="pro-card mb-6 p-4">
             <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-3">
-                <input type="hidden" name="status" value="<?php echo htmlspecialchars($statusFilter); ?>">
+                <input type="hidden" name="order_status" value="<?php echo htmlspecialchars($statusFilter); ?>">
                 <input type="text" name="search" value="<?php echo htmlspecialchars($searchTerm); ?>" placeholder="Search by name/email/order ID..." class="filter-input text-sm md:col-span-2">
                 <select name="payment_method" class="filter-input text-sm" onchange="this.form.submit()">
                     <option value="all" <?php echo $paymentFilter == 'all' ? 'selected' : ''; ?>>All Payments</option>

@@ -10,42 +10,6 @@ $functions = new SystemFunctions();
 $userId = SessionManager::getUserId();
 $db = (new Database())->getConnection();
 
-// First, let's detect the correct column names in the harvest table
-try {
-    $columnsQuery = $db->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'harvest'");
-    $existingColumns = $columnsQuery->fetchAll(PDO::FETCH_COLUMN);
-    error_log("Harvest table columns: " . implode(', ', $existingColumns));
-    
-    // Detect date column
-    $dateColumn = 'harvest_date';
-    if (!in_array('harvest_date', $existingColumns)) {
-        if (in_array('date_harvested', $existingColumns)) {
-            $dateColumn = 'date_harvested';
-        } elseif (in_array('harvested_date', $existingColumns)) {
-            $dateColumn = 'harvested_date';
-        } elseif (in_array('harvest_datetime', $existingColumns)) {
-            $dateColumn = 'harvest_datetime';
-        } else {
-            $dateColumn = 'created_at'; // fallback
-        }
-    }
-    
-    // Detect status column
-    $statusColumn = 'status';
-    if (!in_array('status', $existingColumns)) {
-        if (in_array('harvest_status', $existingColumns)) {
-            $statusColumn = 'harvest_status';
-        } elseif (in_array('batch_status', $existingColumns)) {
-            $statusColumn = 'batch_status';
-        }
-    }
-    
-} catch (Exception $e) {
-    error_log("Column detection error: " . $e->getMessage());
-    $dateColumn = 'harvest_date';
-    $statusColumn = 'status';
-}
-
 // Handle form submissions
 $message = '';
 $messageType = '';
@@ -65,19 +29,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new Exception("A harvest with this batch number already exists.");
                     }
                     
-                    $fishProductId = (int)($_POST['fish_product_id'] ?? 0);
-                    $currentDate = date('Y-m-d');
+                    $fishProductId = !empty($_POST['fish_product_id']) ? (int)$_POST['fish_product_id'] : null;
                     $totalQuantity = floatval($_POST['total_quantity']);
                     
-                    // Use the detected column names
-                    $sql = "INSERT INTO harvest (fish_product_id, batch_no, {$dateColumn}, location, total_quantity, remaining_quantity, {$statusColumn}, created_at, updated_at) 
-                            VALUES (:fpid, :batch_no, :harvest_date, :location, :total_quantity, :remaining_quantity, 'completed', NOW(), NOW()) 
+                    // FIXED: Removed duplicate created_at and updated_at - the table already has these with defaults
+                    $sql = "INSERT INTO harvest (fish_product_id, batch_no, location, total_quantity, remaining_quantity, status) 
+                            VALUES (:fpid, :batch_no, :location, :total_quantity, :remaining_quantity, 'completed') 
                             RETURNING harvest_id";
                     $stmt = $db->prepare($sql);
                     $stmt->execute([
-                        ':fpid'               => $fishProductId ?: null,
+                        ':fpid'               => $fishProductId,
                         ':batch_no'           => $_POST['batch_no'],
-                        ':harvest_date'       => $currentDate,
                         ':location'           => $_POST['location'],
                         ':total_quantity'     => $totalQuantity,
                         ':remaining_quantity' => $totalQuantity
@@ -109,11 +71,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new Exception("Remaining quantity cannot exceed total quantity.");
                     }
                     
+                    // Update status based on remaining quantity
+                    $newStatus = ($remainingQuantity <= 0) ? 'depleted' : 'completed';
+                    
                     $sql = "UPDATE harvest SET 
                             batch_no = :batch_no,
                             location = :location,
                             total_quantity = :total_quantity,
                             remaining_quantity = :remaining_quantity,
+                            status = :status,
                             updated_at = NOW()
                             WHERE harvest_id = :harvest_id";
                     $stmt = $db->prepare($sql);
@@ -122,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':location' => $_POST['location'],
                         ':total_quantity' => $totalQuantity,
                         ':remaining_quantity' => $remainingQuantity,
+                        ':status' => $newStatus,
                         ':harvest_id' => $_POST['harvest_id']
                     ]);
                     
@@ -131,12 +98,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $message = $e->getMessage();
                     $messageType = 'error';
                 }
-                break;
-                
-            case 'update_status':
-                // Disabled - harvests are always completed
-                $message = "Status changes are not allowed. Harvests are automatically marked as completed.";
-                $messageType = 'warning';
                 break;
         }
     }
@@ -159,18 +120,18 @@ $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $perPage = 9;
 $offset = ($page - 1) * $perPage;
 
-// Get total count for pagination - FIXED: Use detected column names
+// Get total count for pagination
 try {
     $countSql = "SELECT COUNT(*) as total FROM harvest WHERE 1=1";
     $countParams = [];
     
     if ($statusFilter !== 'all') {
-        $countSql .= " AND {$statusColumn} = :status";
+        $countSql .= " AND status = :status";
         $countParams[':status'] = $statusFilter;
     }
     
     if ($monthFilter && $yearFilter) {
-        $countSql .= " AND DATE_PART('year', {$dateColumn}) = :year AND DATE_PART('month', {$dateColumn}) = :month";
+        $countSql .= " AND DATE_PART('year', created_at) = :year AND DATE_PART('month', created_at) = :month";
         $countParams[':year'] = $yearFilter;
         $countParams[':month'] = $monthFilter;
     }
@@ -191,7 +152,7 @@ try {
     $totalPages = 0;
 }
 
-// Get harvests with pagination - FIXED: Use detected column names
+// Get harvests with pagination
 try {
     $sql = "SELECT 
                 h.*,
@@ -207,12 +168,12 @@ try {
     $params = [];
     
     if ($statusFilter !== 'all') {
-        $sql .= " AND h.{$statusColumn} = :status";
+        $sql .= " AND h.status = :status";
         $params[':status'] = $statusFilter;
     }
     
     if ($monthFilter && $yearFilter) {
-        $sql .= " AND DATE_PART('year', h.{$dateColumn}) = :year AND DATE_PART('month', h.{$dateColumn}) = :month";
+        $sql .= " AND DATE_PART('year', h.created_at) = :year AND DATE_PART('month', h.created_at) = :month";
         $params[':year'] = $yearFilter;
         $params[':month'] = $monthFilter;
     }
@@ -222,7 +183,7 @@ try {
         $params[':search'] = "%$searchQuery%";
     }
     
-    $sql .= " GROUP BY h.harvest_id, fp.fish_name ORDER BY h.{$dateColumn} DESC, h.harvest_id DESC LIMIT :limit OFFSET :offset";
+    $sql .= " GROUP BY h.harvest_id, fp.fish_name ORDER BY h.created_at DESC, h.harvest_id DESC LIMIT :limit OFFSET :offset";
     $params[':limit'] = $perPage;
     $params[':offset'] = $offset;
     
@@ -239,12 +200,12 @@ try {
     $stmt->execute();
     $harvests = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Get available months for filter - FIXED: Use detected column name
+    // Get available months for filter
     $monthsSql = "SELECT DISTINCT 
-                    EXTRACT(YEAR FROM {$dateColumn}) as year,
-                    EXTRACT(MONTH FROM {$dateColumn}) as month,
-                    TO_CHAR({$dateColumn}, 'YYYY-MM') as month_key,
-                    TO_CHAR({$dateColumn}, 'FMMonth YYYY') as month_name
+                    EXTRACT(YEAR FROM created_at) as year,
+                    EXTRACT(MONTH FROM created_at) as month,
+                    TO_CHAR(created_at, 'YYYY-MM') as month_key,
+                    TO_CHAR(created_at, 'FMMonth YYYY') as month_name
                   FROM harvest 
                   ORDER BY year DESC, month DESC";
     $monthsStmt = $db->query($monthsSql);
@@ -252,7 +213,6 @@ try {
     
 } catch (PDOException $e) {
     error_log("Harvests fetch error: " . $e->getMessage());
-    error_log("SQL Query: " . $sql);
     $harvests = [];
     $availableMonths = [];
     $message = "Database Error: " . $e->getMessage();
@@ -262,19 +222,17 @@ try {
 $statusOptions = [
     'all' => 'All Harvests',
     'completed' => 'Completed',
-    'active' => 'Active'
+    'depleted' => 'Depleted'
 ];
 
 $statusColors = [
-    'active' => 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    'completed' => 'bg-blue-50 text-blue-700 border-blue-200',
-    'archived' => 'bg-gray-50 text-gray-700 border-gray-200'
+    'completed' => 'bg-green-50 text-green-700 border-green-200',
+    'depleted' => 'bg-gray-50 text-gray-700 border-gray-200'
 ];
 
 $statusIcons = [
-    'active' => 'fa-leaf',
     'completed' => 'fa-check-circle',
-    'archived' => 'fa-archive'
+    'depleted' => 'fa-ban'
 ];
 
 function getUsagePercentage($total, $remaining) {
@@ -746,10 +704,7 @@ function buildPaginationLinks($currentPage, $totalPages, $queryParams = []) {
         <?php else: ?>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <?php foreach ($harvests as $harvest): 
-                    // Get the date value dynamically based on detected column
-                    $dateValue = isset($harvest[$dateColumn]) ? $harvest[$dateColumn] : ($harvest['harvest_date'] ?? $harvest['created_at'] ?? date('Y-m-d'));
-                    $statusValue = isset($harvest[$statusColumn]) ? $harvest[$statusColumn] : ($harvest['status'] ?? 'completed');
-                    
+                    $statusValue = $harvest['status'] ?? 'completed';
                     $statusColor = $statusColors[$statusValue] ?? 'bg-blue-50 text-blue-700 border-blue-200';
                     $statusIcon = $statusIcons[$statusValue] ?? 'fa-check-circle';
                     $usagePercentage = getUsagePercentage($harvest['total_quantity'], $harvest['remaining_quantity']);
@@ -770,7 +725,7 @@ function buildPaginationLinks($currentPage, $totalPages, $queryParams = []) {
                                         <div class="flex items-center gap-2 mt-1">
                                             <i class="far fa-calendar-alt text-gray-400 text-xs"></i>
                                             <span class="text-xs text-gray-500">
-                                                <?php echo date('M d, Y', strtotime($dateValue)); ?>
+                                                <?php echo date('M d, Y', strtotime($harvest['created_at'])); ?>
                                             </span>
                                         </div>
                                     </div>
@@ -1079,4 +1034,4 @@ function buildPaginationLinks($currentPage, $totalPages, $queryParams = []) {
         }
     </script>
 </body>
-</html>
+</html> 
