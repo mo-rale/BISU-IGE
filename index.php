@@ -24,7 +24,7 @@ function getDebugInfo($db, $products, $announcements, $userId) {
         $connection = $db->getConnection();
         $debug_info['database_connection'] = 'Connected successfully';
 
-        $tables = ['fish_products', 'announcements', 'users', 'orders'];
+        $tables = ['fish_products', 'announcements', 'users', 'orders', 'harvest'];
         foreach ($tables as $table) {
             try {
                 $stmt = $connection->query("SELECT COUNT(*) FROM $table");
@@ -34,8 +34,17 @@ function getDebugInfo($db, $products, $announcements, $userId) {
             }
         }
 
-        $stmt = $connection->query("SELECT product_id, fish_name, available_quantity, price_per_kg FROM fish_products WHERE available_quantity > 0 LIMIT 3");
-        $debug_info['sample_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Check harvest table for stock
+        $stmt = $connection->query("
+            SELECT fp.product_id, fp.fish_name, fp.price_per_kg, 
+                   COALESCE(SUM(h.remaining_quantity), 0) as total_stock
+            FROM fish_products fp
+            LEFT JOIN harvest h ON h.fish_product_id = fp.product_id AND h.status = 'completed'
+            GROUP BY fp.product_id, fp.fish_name, fp.price_per_kg
+            HAVING COALESCE(SUM(h.remaining_quantity), 0) > 0
+            LIMIT 3
+        ");
+        $debug_info['sample_products_with_stock'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     } catch (Exception $e) {
         $debug_info['database_connection'] = 'Failed: ' . $e->getMessage();
@@ -52,19 +61,21 @@ $init_error = null;
 try {
     $db = (new Database())->getConnection();
 
+    // FIXED: Get products with stock from harvest table (no available_quantity column in fish_products)
     $productSql = "SELECT 
-                    product_id,
-                    fish_name,
-                    description,
-                    price_per_kg,
-                    available_quantity,
-                    unit,
-                    harvest_id,
-                    created_at as harvest_date,
-                    updated_at
-                  FROM fish_products 
-                  WHERE available_quantity > 0
-                  ORDER BY created_at DESC";
+                    fp.product_id,
+                    fp.fish_name,
+                    fp.description,
+                    fp.price_per_kg,
+                    COALESCE(SUM(h.remaining_quantity), 0) AS available_quantity,
+                    MIN(h.created_at) as harvest_date,
+                    fp.created_at,
+                    fp.updated_at
+                  FROM fish_products fp
+                  LEFT JOIN harvest h ON h.fish_product_id = fp.product_id AND h.status = 'completed' AND h.remaining_quantity > 0
+                  GROUP BY fp.product_id, fp.fish_name, fp.description, fp.price_per_kg, fp.created_at, fp.updated_at
+                  HAVING COALESCE(SUM(h.remaining_quantity), 0) > 0
+                  ORDER BY fp.created_at DESC";
 
     $productStmt = $db->query($productSql);
     $allProducts = $productStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -623,7 +634,7 @@ function getStockColorClass($percentage) {
             <div class="debug-section">
                 <h4 class="font-bold mb-2">System Status</h4>
                 <div class="flex justify-between py-1"><span>Products (Showing):</span><span class="font-bold"><?php echo count($products); ?></span></div>
-                <div class="flex justify-between py-1"><span>Products (Total):</span><span class="font-bold"><?php echo count($allProducts ?? []); ?></span></div>
+                <div class="flex justify-between py-1"><span>Products (Total with stock):</span><span class="font-bold"><?php echo count($allProducts ?? []); ?></span></div>
                 <div class="flex justify-between py-1"><span>Announcements:</span><span class="font-bold"><?php echo count($announcements); ?></span></div>
                 <div class="flex justify-between py-1"><span>User Logged In:</span><span class="font-bold"><?php echo $userId ? 'Yes (ID: ' . $userId . ')' : 'No'; ?></span></div>
             </div>
@@ -631,8 +642,27 @@ function getStockColorClass($percentage) {
                 <h4 class="font-bold mb-2">Database Tables</h4>
                 <?php if (isset($debug_info['table_fish_products'])): ?>
                     <div class="flex justify-between py-1"><span>fish_products:</span><span><?php echo $debug_info['table_fish_products']; ?> records</span></div>
+                    <div class="flex justify-between py-1"><span>harvest:</span><span><?php echo $debug_info['table_harvest']; ?> records</span></div>
                     <div class="flex justify-between py-1"><span>announcements:</span><span><?php echo $debug_info['table_announcements']; ?> records</span></div>
                     <div class="flex justify-between py-1"><span>users:</span><span><?php echo $debug_info['table_users']; ?> records</span></div>
+                <?php endif; ?>
+            </div>
+            <div class="debug-section">
+                <h4 class="font-bold mb-2">Products with Stock (Debug)</h4>
+                <?php if (!empty($debug_info['sample_products_with_stock'])): ?>
+                    <?php foreach($debug_info['sample_products_with_stock'] as $p): ?>
+                        <div class="flex justify-between py-1 text-sm">
+                            <span><?php echo htmlspecialchars($p['fish_name']); ?></span>
+                            <span class="font-bold text-green-600"><?php echo number_format($p['total_stock'], 2); ?> kg</span>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <p class="text-red-600 text-sm">No products with stock found! Make sure:</p>
+                    <ul class="list-disc pl-5 text-xs text-gray-600 mt-2">
+                        <li>Harvests exist with status = 'completed'</li>
+                        <li>Harvests have remaining_quantity > 0</li>
+                        <li>Harvests are linked to products (fish_product_id set)</li>
+                    </ul>
                 <?php endif; ?>
             </div>
         </div>
@@ -744,8 +774,8 @@ function getStockColorClass($percentage) {
                     $harvestDate = $product['harvest_date'] ?? date('Y-m-d');
                     $price = (float)($product['price_per_kg'] ?? 0);
                     $available = (float)($product['available_quantity'] ?? 0);
-                    $total = (float)($product['available_quantity'] ?? $available);
-                    $percentage = $total > 0 ? min(100, ($available / $total) * 100) : 0;
+                    $total = max($available, 1);
+                    $percentage = min(100, ($available / $total) * 100);
                     $stockColor = getStockColorClass($percentage);
                     $productImage = getFishImageUrl($fishName, $index);
                 ?>
@@ -779,7 +809,7 @@ function getStockColorClass($percentage) {
 
                             <p class="text-sm text-gray-600 mb-1">
                                 <i class="far fa-calendar-alt text-gray-400 text-xs mr-1"></i>
-                                Harvested: <?php echo date('M d, Y', strtotime($harvestDate)); ?>
+                                Available from: <?php echo date('M d, Y', strtotime($harvestDate)); ?>
                             </p>
 
                             <?php if(!empty($product['description'])): ?>
@@ -842,6 +872,17 @@ function getStockColorClass($percentage) {
                 </div>
                 <h3 class="text-base font-semibold text-gray-900 mb-1">No fish available at the moment</h3>
                 <p class="text-sm text-gray-500">Check back later for new harvests.</p>
+                <?php if($debug_mode): ?>
+                    <div class="mt-4 p-3 bg-yellow-50 rounded-lg text-left text-xs text-yellow-700">
+                        <p class="font-medium mb-1"><i class="fas fa-info-circle mr-1"></i> Debug Info:</p>
+                        <p>To fix this, make sure:</p>
+                        <ul class="list-disc pl-5 mt-1">
+                            <li>Harvests have status = 'completed'</li>
+                            <li>Harvests have remaining_quantity > 0</li>
+                            <li>Harvests are linked to products (fish_product_id set)</li>
+                        </ul>
+                    </div>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
     </div>
@@ -897,18 +938,19 @@ function getStockColorClass($percentage) {
         function runDiagnostic() {
             const issues = [];
             <?php if(empty($products)): ?>
-                issues.push('❌ No products found in database');
-                issues.push('💡 Make sure fish_products table has data with available_quantity > 0');
+                issues.push('❌ No products found with available stock');
+                issues.push('💡 Check: Harvests must have status="completed"');
+                issues.push('💡 Check: Harvests must have remaining_quantity > 0');
+                issues.push('💡 Check: Harvests must be linked to products (fish_product_id)');
             <?php else: ?>
-                issues.push('✅ Products found: <?php echo count($products); ?>');
+                issues.push('✅ Products found with stock: <?php echo count($products); ?>');
             <?php endif; ?>
             <?php if(empty($announcements)): ?>
                 issues.push('⚠️ No announcements found (optional)');
             <?php else: ?>
                 issues.push('✅ Announcements found: <?php echo count($announcements); ?>');
             <?php endif; ?>
-            alert(issues.join('
-'));
+            alert(issues.join('\n'));
         }
         function clearCache() {
             sessionStorage.clear();
