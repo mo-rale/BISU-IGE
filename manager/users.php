@@ -159,6 +159,7 @@ $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $perPage = 20;
 $offset = ($page - 1) * $perPage;
 
+
 // Get total count first
 try {
     $countSql = "SELECT COUNT(*) as total FROM users WHERE 1=1";

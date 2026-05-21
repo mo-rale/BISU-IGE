@@ -66,17 +66,15 @@ $logSql = "
     JOIN users u         ON u.user_id          = o.user_id
     WHERE DATE(hc.created_at) BETWEEN :df AND :dt
 ";
-$logParams = [':df' => $filterDateFrom, ':dt' => $filterDateTo];
+
 
 if ($filterProduct) {
     $logSql .= " AND h.fish_product_id = :pid ";
-    $logParams[':pid'] = $filterProduct;
 }
 
 $logSql .= " ORDER BY hc.created_at DESC, hc.id DESC";
 
 $logStmt = $db->prepare($logSql);
-$logStmt->execute($logParams);
 $consumptionLog = $logStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Harvest batch status table ────────────────────────────────────────────────
@@ -102,9 +100,8 @@ if ($filterProduct) {
     $batchSql .= " WHERE h.fish_product_id = :pid ";
     $batchParams[':pid'] = $filterProduct;
 }
-$batchSql .= " GROUP BY h.harvest_id, fp.fish_name, fp.price_per_kg ORDER BY h.harvest_date ASC";
+$batchSql .= " GROUP BY h.harvest_id, fp.fish_name, fp.price_per_kg ORDER BY h.created_at ASC";
 $bStmt = $db->prepare($batchSql);
-$bStmt->execute($batchParams);
 $batches = $bStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Summary totals ────────────────────────────────────────────────────────────

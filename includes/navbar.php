@@ -563,8 +563,8 @@ $logo_default_svg = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/sv
                             
                             <div class="py-2 px-1">
                                 <?php if($isManager || $isStaff): ?>
-                                    <a href="<?php echo $root_url; ?>/manager/dashboard.php" class="nav-dropdown-item-professional">
-                                        <i class="fas fa-tachometer-alt text-gray-400 w-5 text-center mr-2 text-sm"></i> Dashboard
+                                    <a href="<?php echo $root_url; ?>/manager/inventory_report.php" class="nav-dropdown-item-professional">
+                                        <i class="fas fa-tachometer-alt text-gray-400 w-5 text-center mr-2 text-sm"></i> Inventory Report
                                     </a>
                                     <a href="<?php echo $root_url; ?>/manager/process_returns.php" class="nav-dropdown-item-professional">
                                         <i class="fas fa-calendar-check text-gray-400 w-5 text-center mr-2 text-sm"></i> Returns

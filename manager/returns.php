@@ -122,12 +122,12 @@ if (!in_array($sortBy, $allowedSorts)) $sortBy = 'newest';
 // Get all return requests with proper joins to orders table
 try {
     $sql = "SELECT rr.*, 
-                   o.order_id, o.order_datetime, o.total_amount as order_total, o.payment_method,
-                   u.full_name, u.email, u.department
-            FROM return_requests rr
-            INNER JOIN orders o ON rr.order_id = o.order_id
-            INNER JOIN users u ON rr.user_id = u.user_id
-            WHERE 1=1";
+               o.order_id, o.order_datetime, o.total_amount as order_total, o.payment_method,
+               u.full_name, u.email, u.department
+        FROM return_requests rr
+        LEFT JOIN orders o ON rr.order_id = o.order_id
+        LEFT JOIN users u ON rr.user_id = u.user_id
+        WHERE 1=1";
 
     $params = [];
 
@@ -908,15 +908,13 @@ $counts = [
                         <input type="date" name="date_to" value="<?php echo $dateTo; ?>" class="filter-input" placeholder="To">
                     </div>
                 </div>
-
-                <div class="flex gap-2">
+                        <br>
                     <button type="submit" class="btn-brand flex-1 justify-center text-sm">
                         <i class="fas fa-filter text-xs"></i> Filter
                     </button>
                     <a href="returns.php" class="btn-secondary justify-center" title="Reset filters">
                         <i class="fas fa-redo-alt text-xs"></i>
                     </a>
-                </div>
             </form>
         </div>
 
